@@ -1,0 +1,96 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'requirements.txt'
+      - 'scripts/**'
+      - '.github/workflows/build.yml'
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'requirements.txt'
+      - 'scripts/**'
+  workflow_dispatch:
+    inputs:
+      # A string choice, not `type: boolean`, on purpose. On a push event
+      # `inputs.bake_weights` is empty, and GitHub's expression comparison casts
+      # both sides to a number -- so `'' == false` evaluates TRUE and a boolean
+      # input would silently build every push without the weights. A string
+      # falls back cleanly with `|| '1'`.
+      bake_weights:
+        description: 'Bake GLM-OCR weights into the image (1 = yes)'
+        type: choice
+        options: ['1', '0']
+        default: '1'
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # A CUDA torch stack plus vllm plus baked weights overruns the default
+      # hosted-runner disk. This reclaims ~25 GB, and without it the build dies
+      # partway through the install layer with a confusing ENOSPC.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false   # slow, and we do not need the reclaim
+          swap-storage: true
+
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/glm-ocr-hu-env
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          # Explicit because the author's machine is arm64 and the target never
+          # is. Without it a local `docker build` and CI produce different images.
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BAKE_WEIGHTS=${{ inputs.bake_weights || '1' }}
+          # mode=min, not max: mode=max also caches every intermediate layer of a
+          # multi-GB CUDA install, and GitHub's 10 GB Actions cache then evicts
+          # itself on every build -- paying the upload cost for no reuse.
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+
+      # The build's own RUN steps already assert the environment (scripts/
+      # verify_env.py). This is the reminder that one thing genuinely cannot be
+      # checked here: no GPU, so no real `import vllm` and no driver check.
+      - name: Note
+        run: |
+          echo "Image built and pushed. Two things CI cannot verify:"
+          echo "  1. a real 'import vllm' (needs libcuda.so.1)"
+          echo "  2. the pod's driver is r580+, required by the CUDA 13 wheels"
+          echo "Run scripts/preflight.sh on the pod as the first command."

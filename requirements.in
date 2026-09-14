@@ -1,0 +1,45 @@
+# Environment for GLM-OCR Hungarian post-training on a rented CUDA box.
+# Unpinned intent; `requirements.txt` next to this file is the compiled lock.
+# Recompile with:  make lock
+#
+# One environment holds BOTH the trainer and the inference server. That is only
+# possible inside a narrow window, so the three pins below are load-bearing:
+#
+#   LLaMA-Factory 100e9a4 requires  transformers >=4.55.0,<=5.8.0,!=5.6.0
+#   vllm 0.28.0           requires  transformers >=5.5.3        + torch ==2.13.0
+#   vllm 0.29.0           requires  transformers >=5.10.4       <- NO OVERLAP
+#
+# So 0.28.0 is the newest vllm that can share a venv with this trainer.
+# Bumping vllm past it forces a second venv and a second ~3 GB torch stack.
+# transformers 5.8.0 is also the version verified to carry `glm_ocr` in
+# CONFIG_MAPPING_NAMES; the build asserts it rather than trusting this comment.
+
+torch==2.13.0
+vllm==0.28.0
+transformers<=5.8.0
+
+# The trainer, pinned by commit -- the revision verified end to end on macOS
+# 2026-09-13 (LLaMA-Factory 0.9.6.dev0). A moving `main` here would mean the
+# image that produced a checkpoint is unreproducible.
+llamafactory @ git+https://github.com/hiyouga/LLaMA-Factory.git@100e9a4
+
+# LLaMA-Factory's requirements/metrics.txt -- it computes BLEU/ROUGE during eval
+# and dies at eval time, not import time, without these.
+nltk
+jieba
+rouge-chinese
+
+# ocr-post-training's own runtime deps, so the private repo installs on the box
+# with `pip install -e . --no-deps` -- zero resolution against the clock.
+typer
+pydantic
+pydantic-settings
+rich
+pillow
+pymupdf
+fonttools
+numpy
+
+# No [cli] extra: hub 1.x ships the `hf` command in the base package, and asking
+# for the extra is only a warning, not an error -- easy to leave in and believe.
+huggingface-hub
