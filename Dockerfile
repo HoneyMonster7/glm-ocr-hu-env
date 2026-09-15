@@ -17,9 +17,13 @@ FROM python:3.12-slim-trixie@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9ad
 # git: pip installs LLaMA-Factory from a git ref.
 # curl, ca-certificates: dataset pull on the pod.
 # libnuma1, libgomp1: vllm's and torch's threading/NUMA paths dlopen these.
+# openssh-server: RunPod's ssh/scp access needs a real sshd in the container. Their documented
+#   recipe apt-installs it at pod start; baking it trades ~40 MB of image for ~20 s of billed
+#   time and one fewer network dependency at the moment you can least afford one.
+# rsync: scp'ing ~1 GB of pages over a flaky link, resumably.
 # No libGL: the resolve lands on opencv-python-headless, which does not need it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git curl ca-certificates libnuma1 libgomp1 \
+        git curl ca-certificates libnuma1 libgomp1 openssh-server rsync \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.2 /uv /uvx /bin/
@@ -54,10 +58,13 @@ RUN if [ "$BAKE_WEIGHTS" = "1" ]; then \
 # Fail the build, not the rental. Each of these has a known way of going wrong
 # silently, so they are assertions rather than prints.
 COPY scripts/ /opt/app/
-RUN chmod +x /opt/app/preflight.sh && python /opt/app/verify_env.py
+RUN chmod +x /opt/app/preflight.sh /opt/app/start.sh && python /opt/app/verify_env.py
 
 # Sanity: the trainer's entrypoint must exist on PATH, since `ocr-pt train`
 # shells out to it by name and would otherwise fail after dataset preprocessing.
 RUN llamafactory-cli version
 
-CMD ["/bin/bash"]
+# Not ["/bin/bash"]: a pod whose container process exits is a pod that stops, and bash with
+# no TTY exits immediately. start.sh brings up sshd and blocks. See the script.
+EXPOSE 22
+CMD ["/opt/app/start.sh"]
