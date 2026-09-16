@@ -64,6 +64,31 @@ COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system -r requirements.txt
 
+# Expose the CUDA toolkit that the nvidia-* wheels already installed.
+#
+# `nvidia-cuda-nvcc` puts a complete toolkit -- bin/, include/, lib/, nvvm/ -- under
+# site-packages, but every library that shells out to a CUDA compiler looks for `nvcc` on PATH
+# or at $CUDA_HOME, defaulting to /usr/local/cuda. A symlink costs nothing and makes the
+# toolkit findable, where a nvidia/cuda base image would have added ~3 GB of duplicate.
+RUN ln -sfn /usr/local/lib/python3.12/site-packages/nvidia/cu13 /usr/local/cuda
+ENV CUDA_HOME=/usr/local/cuda \
+    PATH=/usr/local/cuda/bin:$PATH
+
+# Do not let vllm JIT-compile flashinfer's sampling kernels on startup.
+#
+# Measured on an L4, 2026-09-16: with nvcc reachable it still fails, because pip's split CUDA
+# packages disagree -- nvidia-cuda-nvcc is 13.4.59 while nvidia-cuda-runtime is 13.0.96, and
+# flashinfer's build stops at
+#   "CUDA compiler and CUDA toolkit headers are incompatible".
+#
+# Disabling it costs this project nothing measurable. `predict` decodes at temperature 0 with
+# a fixed seed (models/glm_ocr_vllm.py sends `seed` because temperature 0 alone was not
+# reproducible over this transport), so a faster top-k/top-p sampler optimises work we never
+# do -- the cost is the prefill of a ~2,500-token page image. The AOT alternative
+# (`python -m flashinfer.aot` across four target arches at build time) was considered and
+# rejected: real build complexity to precompute kernels for a sampler this project does not use.
+ENV VLLM_USE_FLASHINFER_SAMPLER=0
+
 # Bake the base weights (~2 GB). They are public and immutable, and pulling them
 # on the pod is billed GPU-idle time plus one more thing that can fail mid-rental.
 #

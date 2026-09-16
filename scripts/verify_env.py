@@ -120,6 +120,33 @@ def _c_compiler():
     return f"{compiler}, {header.name} present"
 
 
+def _cuda_toolkit():
+    """`nvcc` must be findable where CUDA build systems look for it.
+
+    The nvidia-* wheels ship a full toolkit under site-packages, but libraries that shell out
+    to a CUDA compiler look on PATH or at $CUDA_HOME (default /usr/local/cuda). Without the
+    symlink, flashinfer failed on an L4 (2026-09-16) with "Could not find nvcc and default
+    cuda_home='/usr/local/cuda' doesn't exist".
+
+    Note what this does NOT promise: nvcc and the CUDA runtime headers come from separately
+    versioned wheels (13.4.59 against 13.0.96), and flashinfer's build rejects that pairing as
+    incompatible. That is why VLLM_USE_FLASHINFER_SAMPLER is 0 rather than why it is 1.
+    """
+    nvcc = shutil.which("nvcc")
+    assert nvcc, "nvcc not on PATH; CUDA JIT compilation would fail at run time"
+    assert Path("/usr/local/cuda/include/cuda_runtime.h").exists(), (
+        "no cuda_runtime.h under /usr/local/cuda; the toolkit symlink is incomplete"
+    )
+    return nvcc
+
+
+def _flashinfer_sampler_disabled():
+    """The image must ship with vllm's flashinfer sampler off. See the Dockerfile."""
+    value = os.environ.get("VLLM_USE_FLASHINFER_SAMPLER")
+    assert value == "0", f"VLLM_USE_FLASHINFER_SAMPLER is {value!r}, expected '0'"
+    return "VLLM_USE_FLASHINFER_SAMPLER=0"
+
+
 def _eval_metrics():
     """nltk / jieba / rouge-chinese are imported at the first eval step.
 
@@ -184,6 +211,8 @@ def main() -> int:
     check("llamafactory", _llamafactory)
     check("vllm wheel", _vllm_present)
     check("C compiler for triton", _c_compiler)
+    check("CUDA toolkit reachable", _cuda_toolkit)
+    check("flashinfer sampler off", _flashinfer_sampler_disabled)
     check("glm_ocr architecture", _glm_ocr_architecture)
     check("glm_ocr chat template", _glm_ocr_template)
     check("eval metric deps", _eval_metrics)
