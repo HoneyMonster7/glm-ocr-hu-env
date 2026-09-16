@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -96,6 +97,29 @@ def _glm_ocr_template():
 # --- deps that fail late rather than at import -------------------------------
 
 
+def _c_compiler():
+    """triton JIT-compiles kernels at run time and shells out to a C compiler.
+
+    Nothing in this image is built at build time, which is what lets the base be a plain
+    python image rather than a CUDA one -- but triton compiles a C extension the first time a
+    kernel is launched, and `python:3.12-slim` ships no compiler. Measured on an L4
+    (2026-09-16): the run loaded the model, reported the correct trainable-param count, and
+    then died at step 0 with "Failed to find C compiler".
+
+    The *need* only appears on a GPU, so CI cannot catch it by running anything. The
+    compiler's presence is checkable anywhere, so it is checked here.
+    """
+    import sysconfig
+
+    compiler = shutil.which("cc") or shutil.which("gcc")
+    assert compiler, "no C compiler on PATH; triton cannot build its kernels"
+
+    # triton builds a CPython extension, so the headers have to be there too.
+    header = Path(sysconfig.get_paths()["include"]) / "Python.h"
+    assert header.exists(), f"no {header}; triton's extension build would fail"
+    return f"{compiler}, {header.name} present"
+
+
 def _eval_metrics():
     """nltk / jieba / rouge-chinese are imported at the first eval step.
 
@@ -159,6 +183,7 @@ def main() -> int:
     check("transformers", _transformers)
     check("llamafactory", _llamafactory)
     check("vllm wheel", _vllm_present)
+    check("C compiler for triton", _c_compiler)
     check("glm_ocr architecture", _glm_ocr_architecture)
     check("glm_ocr chat template", _glm_ocr_template)
     check("eval metric deps", _eval_metrics)

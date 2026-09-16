@@ -16,6 +16,12 @@ FROM python:3.12-slim-trixie@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9ad
 
 # git: pip installs LLaMA-Factory from a git ref.
 # curl, ca-certificates: dataset pull on the pod.
+# build-essential: NOT for building anything here -- triton JIT-compiles CUDA kernels at RUN
+#   time and shells out to `cc`, so without it the first training step dies with
+#   "Failed to find C compiler" after the model has loaded. Measured on an L4, 2026-09-16:
+#   the run reached `trainable params: 3,735,552` and then failed at step 0. This is the one
+#   thing the CUDA-less base image costs, and it cannot be caught by any GPU-less CI check,
+#   because nothing compiles a kernel until there is a device to compile it for.
 # libnuma1, libgomp1: vllm's and torch's threading/NUMA paths dlopen these.
 # openssh-server: RunPod's ssh/scp access needs a real sshd in the container. Their documented
 #   recipe apt-installs it at pod start; baking it trades ~40 MB of image for ~20 s of billed
@@ -23,7 +29,7 @@ FROM python:3.12-slim-trixie@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9ad
 # rsync: scp'ing ~1 GB of pages over a flaky link, resumably.
 # No libGL: the resolve lands on opencv-python-headless, which does not need it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git curl ca-certificates libnuma1 libgomp1 openssh-server rsync \
+        git curl ca-certificates build-essential libnuma1 libgomp1 openssh-server rsync \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.2 /uv /uvx /bin/
