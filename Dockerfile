@@ -32,6 +32,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git curl ca-certificates build-essential libnuma1 libgomp1 openssh-server rsync \
  && rm -rf /var/lib/apt/lists/*
 
+# Shell tooling, so the pod is usable from RunPod's web terminal without apt-getting first.
+# A few MB against a 6.5 GB image; the debugging time it saves is worth more than the bytes.
+#
+# NOT coreutils or procps -- the slim base already has both, so `tail`, `head`, `ps`, `top` and
+# `watch` all work. What it actually lacks is a pager and an editor. Checked on a live pod
+# rather than guessed (2026-09-16).
+#
+# tmux is the one that changes the workflow: a training run inside it survives a dropped ssh
+# connection, which on a multi-hour run is the difference between reconnecting and re-renting.
+# nvtop watches the GPU the way top watches the CPU -- the fastest way to see whether a run is
+# saturating the card or waiting on the dataloader.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        less vim-tiny tmux htop nvtop jq tree \
+ && ln -sf /usr/bin/vim.tiny /usr/bin/vim \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY --from=ghcr.io/astral-sh/uv:0.9.2 /uv /uvx /bin/
 
 # HF_HOME under /opt, like everything else: if a RunPod network volume is ever
