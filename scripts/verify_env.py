@@ -186,10 +186,24 @@ def _weights():
 
     Checks model_type rather than mere presence: a partial or redirected
     download leaves files on disk that look fine to `ls`.
+
+    **Asserts HF_HOME is set rather than quietly defaulting to it.** The previous version read
+    ``os.environ.get("HF_HOME", "/opt/hf")``, so it found the weights whether or not the
+    variable was set. That is testing *presence*; what a pod depends on is *reachability*, and
+    the two came apart on an A100 pod on 2026-09-19: HF_HOME was absent from every ssh session,
+    this check passed anyway, and `vllm serve` re-downloaded the 2.65 GB checkpoint the image
+    had already baked -- on billed time, with only an "unauthenticated requests to the HF Hub"
+    warning to say so. The propagation fix is in start.sh; this is the assertion that would
+    have caught it.
     """
     import json
 
-    hub = Path(os.environ.get("HF_HOME", "/opt/hf")) / "hub"
+    home = os.environ.get("HF_HOME")
+    assert home, (
+        "HF_HOME is unset -- the runtime would fall back to ~/.cache/huggingface and "
+        "re-download the baked checkpoint"
+    )
+    hub = Path(home) / "hub"
     snaps = sorted(hub.glob("models--zai-org--GLM-OCR/snapshots/*"))
     assert snaps, f"no GLM-OCR snapshot under {hub}"
     snap = snaps[-1]
