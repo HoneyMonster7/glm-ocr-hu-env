@@ -13,14 +13,11 @@
 # environment.
 set -euo pipefail
 
-# RunPod injects the account's public key here. Absent on a plain `docker run`, which is fine:
-# that path uses `docker exec`, not ssh.
-if [ -n "${PUBLIC_KEY:-}" ]; then
-    mkdir -p /root/.ssh
-    chmod 700 /root/.ssh
-    echo "$PUBLIC_KEY" >> /root/.ssh/authorized_keys
-    chmod 600 /root/.ssh/authorized_keys
-fi
+# RunPod injects the account's public keys as PUBLIC_KEY (or a per-pod SSH_PUBLIC_KEY). Absent
+# on a plain `docker run`, which is fine: that path uses `docker exec`, not ssh. The installer
+# repairs keys run together on one line and logs every fingerprint it installs -- see its header
+# for the 2026-09-26 pod that refused the right key with nothing on the box to say why.
+bash /opt/app/install_ssh_keys.sh
 
 # Materialise the image's ENV for ssh sessions.
 #
